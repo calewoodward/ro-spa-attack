@@ -1,23 +1,46 @@
 module ro_tb();
 
-logic clk, clk_en, go, add_tree_valid_out;
-logic [3-1:0] num_samples;
-logic [16+$clog2(8)-1:0]  add_tree_result;
+localparam int  N                   = 20;
+localparam int  WIDTH               = 14;
+localparam int  ADD_WIDTH           = WIDTH+$clog2(N);
 
-ro_top 
-    #(
-      .N(8),
-      .WIDTH(16),
-      .NUM_SAMPLE_WIDTH(3),
-      .RESULT_WIDTH(8)
-    ) DUT
-    (
-        .clk(clk),
-        .go(go),
-        .num_samples(num_samples),
-        .add_tree_result(add_tree_result),
-        .add_tree_valid_out(add_tree_valid_out)
-    );
+localparam int  NUM_SAMPLE_WIDTH    = 16;
+localparam int  RESULT_WIDTH        = 32;
+localparam int  FIFO_DEPTH          = 512;
+localparam int  FIFO_WIDTH          = 20;
+localparam int  PIPELINE_LATENCY    = $clog2(N);
+localparam int  REG_SIZE            = 20;
+localparam int  SWITCH_DURATION     = 10;
+
+logic clk, clk_en, rst, go, stop, fifo_empty, fifo_rd_en;
+logic [NUM_SAMPLE_WIDTH-1:0]    num_samples;
+logic [NUM_SAMPLE_WIDTH-1:0]    collect_cycles;
+logic [FIFO_WIDTH-1:0]        fifo_rd_data;
+
+   ro_top
+      #(
+         .N(N),
+         .WIDTH(WIDTH),
+         .ADD_WIDTH(ADD_WIDTH),
+         .NUM_SAMPLE_WIDTH(NUM_SAMPLE_WIDTH),
+         .RESULT_WIDTH(RESULT_WIDTH),
+         .FIFO_DEPTH(FIFO_DEPTH),
+         .FIFO_WIDTH(FIFO_WIDTH),
+         .PIPELINE_LATENCY(PIPELINE_LATENCY),
+         .REG_SIZE(REG_SIZE),
+         .SWITCH_DURATION(SWITCH_DURATION)
+      ) ro_top
+      (
+         .clk(clk),
+         .afu_rst(rst),
+         .go(go),
+         .stop(1'b0),
+         .num_samples(num_samples),
+         .collect_cycles(collect_cycles),
+         .fifo_empty(fifo_empty),
+         .fifo_rd_en(fifo_rd_en),
+         .fifo_rd_data(fifo_rd_data)
+      );
 
 initial begin
     clk = 1'b0;
@@ -29,12 +52,37 @@ initial begin
 end
 
 initial begin
-    go = 1'b1;
-    num_samples = 3'b111;
-    repeat(100) begin
+    rst = 1'b1;
+    go  = 1'b0;
+    num_samples = 16'd20;
+    collect_cycles = 1;
+    fifo_rd_en  = 1'b0;
+    repeat(3) begin
         @(posedge clk);
-        $display("valid=%b result =%d", add_tree_valid_out, add_tree_result);
     end
+    rst = 1'b0;
+    go  = 1'b1;
+    @(posedge clk);
+    go = 1'b0;
+    repeat((num_samples*PIPELINE_LATENCY)/2) begin
+        @(posedge clk);
+        fifo_rd_en = 1'b0;
+        if(!fifo_empty) begin
+            fifo_rd_en = 1'b1;
+            $display("fifo data = %d", fifo_rd_data);
+        end
+    end
+    collect_cycles = 10;
+    $display("changing cycles");
+    repeat(200) begin
+        @(posedge clk);
+        fifo_rd_en = 1'b0;
+        if(!fifo_empty) begin
+            fifo_rd_en = 1'b1;
+            $display("fifo data = %d", fifo_rd_data);
+        end
+    end
+    $display("test complete");
     clk_en = 1'b0;
 end
 
