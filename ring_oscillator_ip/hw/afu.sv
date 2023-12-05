@@ -60,10 +60,6 @@
 `include "cci_mpf_if.vh"
 
 module afu
-   #(
-        parameter N = 20,
-        parameter WIDTH=14
-   ) 
   (
    input clk,
    input rst,
@@ -71,12 +67,23 @@ module afu
 	 dma_if.peripheral dma
    );
 
+   // 64-bit address lines
    localparam int CL_ADDR_WIDTH = $size(t_ccip_clAddr);
+   // 512-bit data lines
    localparam int CL_DATA_WIDTH = $size(t_ccip_clData); 
    localparam int INPUT_WIDTH = 32;
    localparam int RESULT_WIDTH = 32;
    localparam int INPUTS_PER_CL = CL_DATA_WIDTH / INPUT_WIDTH;   // 16
    localparam int RESULTS_PER_CL = CL_DATA_WIDTH / RESULT_WIDTH; // 16
+
+   localparam int REG_SIZE = 64;
+   localparam int SWITCH_DURATION = 100;
+
+   localparam int  N = 20;
+   localparam int  WIDTH=14;
+
+    // each level of depth requires an extra bit of width, and all adders use the same width
+   localparam int ADD_WIDTH = WIDTH + $clog2(N);
    
    // Normally I would make this a function of the number of inputs, but since
    // the pipeline is hardcoded for a specific number of inputs in this example,
@@ -85,7 +92,8 @@ module afu
    
    // 512 is the shallowest a block RAM can be in the Arria 10, so there's no 
    // point in making it smaller unless using MLABs instead.
-   localparam int FIFO_DEPTH = 512;
+   localparam int FIFO_DEPTH = 1024;
+   localparam int FIFO_WIDTH = 20;
             
    // I want to just use dma.count_t, but apparently
    // either SV or Modelsim doesn't support that. Similarly, I can't
@@ -123,50 +131,53 @@ module afu
       #(
          .N(N),
          .WIDTH(WIDTH),
+         .ADD_WIDTH(ADD_WIDTH),
          .NUM_SAMPLE_WIDTH(CL_ADDR_WIDTH),
          .RESULT_WIDTH(RESULT_WIDTH),
          .FIFO_DEPTH(FIFO_DEPTH),
-         .PIPELINE_LATENCY(PIPELINE_LATENCY)
+         .FIFO_WIDTH(FIFO_WIDTH),
+         .PIPELINE_LATENCY(PIPELINE_LATENCY),
+         .REG_SIZE(REG_SIZE),
+         .SWITCH_DURATION(SWITCH_DURATION)
       ) ro_top
       (
          .clk(clk),
          .afu_rst(rst),
          .go(go),
+         .stop(1'b0),
          .num_samples(num_samples),
+         .collect_cycles(collect_cycles),
          .fifo_empty(fifo_empty),
          .fifo_rd_en(fifo_rd_en),
          .fifo_rd_data(fifo_rd_data)
       );
+  
+      // logic [KEY_SIZE-1:0] rsa_M;
+      // logic [KEY_SIZE-1:0] rsa_N;
+      // logic [KEY_SIZE-1:0] rsa_d;
+      //logic                rsa_done;
 
+      //assign rsa_M = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
+      //assign rsa_N = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
+      //assign rsa_d = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
 
-   // padd fifo with zeroes as needed
-   //assign fifo_wr_data = {{($size(fifo_wr_data)-$size(add_tree_result)){1'b0}},add_tree_result};
-   //assign fifo_wr_data = {{($size(fifo_wr_data)-3){1'b0}},3'b111};
-   // collect outputs in FIFO
-   /*fifo 
-     #(
-       .WIDTH(RESULT_WIDTH),
-       .DEPTH(FIFO_DEPTH),
-       // This leaves enough space to absorb the entire contents of the
-       // pipeline when there is a stall.
-       .ALMOST_FULL_COUNT(FIFO_DEPTH-PIPELINE_LATENCY)
-       )
-   absorption_fifo 
-     (
-      .clk(clk),
-      .rst(rst),
-      .rd_en(fifo_rd_en),
-      .wr_en(add_tree_valid_out),
-      .empty(fifo_empty),
-      .full(), // Not used in an absorption FIFO.
-      .almost_full(fifo_almost_full),
-      .count(),
-      .space(),
-      .wr_data(fifo_wr_data),
-      .rd_data(fifo_rd_data)
-      );
-*/
-
+      // mod_exp
+      //    #(
+      //       .KEY_SIZE(KEY_SIZE),
+      //       .RSA_MOD(KEY_SIZE)
+      //    ) 
+      //    mod_exp
+      //    (
+      //       .clk(clk),
+      //       .rst(rst),
+      //       .go(go),
+      //       .M(rsa_M),
+      //       .N(rsa_N), 
+      //       .d(rsa_d), 
+      //       .done(rsa_done),
+      //       .R()
+      //    );
+   
    // Tracks the number of results in the output buffer to know when to
    // write the buffer to memory (when a full cache line is available).
    logic [$clog2(RESULTS_PER_CL):0] result_count_r;
@@ -203,7 +214,7 @@ module afu
          // After 16 reads from the FIFO, output_buffer_r will contain 16 complete
          // results, all aligned correctly for memory.
          if (fifo_rd_en) begin
-            output_buffer_r <= {fifo_rd_data, 
+            output_buffer_r <= {{(RESULT_WIDTH-FIFO_WIDTH){1'b0}},fifo_rd_data, 
                   output_buffer_r[CL_DATA_WIDTH-1:RESULT_WIDTH]};
 
             // Track the number of results in the output buffer. There is
@@ -223,7 +234,7 @@ module afu
    // For every input cache line, we get 16 32-bit inputs. These inputs produce
    // one 64-bit output. We can store 16 outputs in a cache line, so there is
    // one output cache line for every 16 input cache lines.
-   assign dma.wr_size = num_samples >> 3;
+   assign dma.wr_size = num_samples >> 4;
 
    // Start both the read and write channels when the MMIO go is received.
    // Note that writes don't actually occur until dma.wr_en is asserted.
@@ -243,8 +254,7 @@ module afu
    // Write the data from the output buffer, which stores 2 separate results.
    assign dma.wr_data = output_buffer_r;
 
-   // The AFU is done when the DMA is done writing all results.
-   assign done = dma.wr_done;
+   assign done = dma.wr_done;// || rsa_done;
             
 endmodule
 

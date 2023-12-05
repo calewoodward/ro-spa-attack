@@ -45,15 +45,16 @@
 using namespace std;
 
 void printUsage(char *name);
-bool checkUsage(int argc, char *argv[], unsigned long &num_inputs);
+bool checkUsage(int argc, char *argv[], unsigned long &num_inputs, unsigned long &num_cycles);
 
 int main(int argc, char *argv[]) {
 
   unsigned long num_output_cls;
+  unsigned long num_collect_cycles;
   unsigned long num_inputs;
   unsigned long num_outputs;
 
-  if (!checkUsage(argc, argv, num_output_cls)) {
+  if (!checkUsage(argc, argv, num_output_cls, num_collect_cycles)) {
     printUsage(argv[0]);
     return EXIT_FAILURE;
   }
@@ -66,10 +67,11 @@ int main(int argc, char *argv[]) {
   try {
     AFU afu(AFU_ACCEL_UUID); 
     bool failed = false;
+    //afu.reset();
 
     // Allocate input and output arrays.
     auto input  = afu.malloc<volatile uint32_t>(num_inputs);
-    auto output = afu.malloc<volatile uint64_t>(num_outputs);  
+    auto output = afu.malloc<volatile uint32_t>(num_outputs);  
 
     // Initialize the input and output arrays.
     for (unsigned i=0; i < num_inputs; i++) {      
@@ -87,6 +89,7 @@ int main(int argc, char *argv[]) {
 
     // write the number of samples requested to MMIO
     afu.write(MMIO_NUM_SAMPLES, num_outputs);
+    afu.write(MMIO_COLLECT_CYCLES, num_collect_cycles);
 
     // send the go signal for the FPGA to begin collection RO measurements
     afu.write(MMIO_GO, 1);  
@@ -108,13 +111,14 @@ int main(int argc, char *argv[]) {
     }
 
     // write the outputs to file
-    string file_name = "/home/u208080/ring_oscillator_ip/ro_output.txt";
+    string file_name = "/home/u208080/ro_switching.txt";
     ofstream txt_out(file_name.c_str());
     uint32_t outL, outR;
     for (unsigned i=0; i < num_outputs; i++) { 
-      outL = (uint32_t)(output[i]>>32); 
-      outR = (uint32_t)output[i];  
-      txt_out << outL << endl << outR << endl;
+      //outL = (uint32_t)(output[i]>>32); 
+      //outR = (uint32_t)output[i];  
+      //txt_out << outR << endl << outL << endl;
+      txt_out << output[i] << endl;
     }
     txt_out.close();
 
@@ -176,11 +180,12 @@ unsigned long stringToPositiveInt(char *str) {
 }
 
 
-bool checkUsage(int argc, char *argv[], unsigned long &num_output_cls) {
+bool checkUsage(int argc, char *argv[], unsigned long &num_output_cls, unsigned long &num_cycles) {
   
-  if (argc == 2) {
+  if (argc == 3) {
     try {
       num_output_cls = stringToPositiveInt(argv[1]);
+      num_cycles     = stringToPositiveInt(argv[2]);
     }
     catch (const runtime_error& e) {    
       return false;
