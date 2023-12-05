@@ -65,7 +65,7 @@ module memory_map
 	
    mmio_if.user mmio,
    output logic [ADDR_WIDTH-1:0] rd_addr, wr_addr,
-   output logic [SIZE_WIDTH-1:0] num_samples,
+   output logic [SIZE_WIDTH-1:0] num_samples, collect_cycles,
    output logic                  go,
    input logic 	               done   
    );
@@ -79,6 +79,7 @@ module memory_map
          rd_addr       <= '0;
          wr_addr       <= '0;	     
          num_samples   <= '0;
+         collect_cycles   <= '0;
       end
       else begin
 	      go <= '0;
@@ -89,6 +90,7 @@ module memory_map
                16'h0052: rd_addr       <= mmio.wr_data[$size(rd_addr)-1:0];
                16'h0054: wr_addr       <= mmio.wr_data[$size(wr_addr)-1:0];
                16'h0056: num_samples   <= mmio.wr_data[$size(num_samples)-1:0];
+               16'h0058: collect_cycles   <= mmio.wr_data[$size(collect_cycles)-1:0];
             endcase
          end
       end
@@ -110,7 +112,8 @@ module memory_map
                16'h0052: mmio.rd_data[$size(rd_addr)-1:0]      <= rd_addr;
                16'h0054: mmio.rd_data[$size(wr_addr)-1:0]      <= wr_addr;
                16'h0056: mmio.rd_data[$size(num_samples)-1:0]  <= num_samples;     
-               16'h0058: mmio.rd_data[0] 		                  <= done;
+               16'h0058: mmio.rd_data[$size(collect_cycles)-1:0]  <= collect_cycles;
+               16'h0060: mmio.rd_data[0] 		                  <= done;
                default:  mmio.rd_data 			                  <= 64'h0;
             endcase
          end

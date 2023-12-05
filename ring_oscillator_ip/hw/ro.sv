@@ -2,34 +2,6 @@
 // Cale Woodward
 // Single stage ring oscillator with counter for estimating power consumption
 
-/*
-//sim
-module tflipflop
-// T-Flip-Flop with asynchronous CLEAR
-    (
-        input   logic   clk, 
-        input   logic   rst, 
-        input   logic   t,
-        output  logic   q
-    );
-
-    logic delay_out;
-
-    always_ff @(posedge clk or posedge rst) begin
-        if(rst)     delay_out <= 1'b0;
-        else if(t)  begin
-            delay_out <= ~q;
-        end
-    end
-
-    always @(*) begin
-        #1;
-        q = delay_out;
-    end
-
-endmodule
-*/
-
 module tflipflop
 // T-Flip-Flop with asynchronous CLEAR
     (
@@ -47,6 +19,7 @@ module tflipflop
     end
     
 endmodule
+
 
 module and2x1
 // 2-input AND gate
@@ -68,20 +41,16 @@ module inv1x1
     );
 
     assign out = ~in;
-    // always @(*) begin
-    //     #1;
-    //     out = ~in;
-    // end
 endmodule
 
 module add
     #(
-        parameter WIDTH_ADD = 19
+        parameter ADD_WIDTH = 19
     )
     (
-        input   logic [WIDTH_ADD-1:0] in1, 
-        input   logic [WIDTH_ADD-1:0] in2,
-        output  logic [WIDTH_ADD-1:0] out
+        input   logic [ADD_WIDTH-1:0] in1, 
+        input   logic [ADD_WIDTH-1:0] in2,
+        output  logic [ADD_WIDTH-1:0] out
     );
 
     assign out = in1 + in2;
@@ -93,7 +62,8 @@ module add_tree
 // Also handles case where N is not a power of 2
     #(
         parameter N = 20,
-        parameter WIDTH = 14
+        parameter WIDTH = 14,
+        parameter ADD_WIDTH = 19
     )
     (
         input   logic                       clk,
@@ -101,7 +71,7 @@ module add_tree
         input   logic                       rst,
         input   logic [WIDTH-1:0]           in[N],
         input   logic                       add_tree_valid_in,
-        output  logic [WIDTH+$clog2(N)-1:0] add_tree_result,
+        output  logic [ADD_WIDTH-1:0]       add_tree_result,
         output  logic                       add_tree_valid_out
     );
 
@@ -109,14 +79,12 @@ module add_tree
     localparam DEPTH = $clog2(N);
     // for add tree, we need num inputs to be a power of 2
     localparam N_POW = 2**$clog2(N);
-    // each level of depth requires an extra bit of width, and all adders use the same width
-    localparam WIDTH_ADD = WIDTH + $clog2(N);
     
     // register to hold expanded input array
-    logic [WIDTH_ADD-1:0]   in_r[N_POW];
+    logic [ADD_WIDTH-1:0]   in_r[N_POW];
     // wires and registers to hold pipeline stage outputs
-    logic [WIDTH_ADD-1:0]   stage  [DEPTH][N_POW/2];
-    logic [WIDTH_ADD-1:0]   stage_r[DEPTH][N_POW/2];
+    logic [ADD_WIDTH-1:0]   stage  [DEPTH][N_POW/2];
+    logic [ADD_WIDTH-1:0]   stage_r[DEPTH][N_POW/2];
     // delay for valid_out (extra delay cycle for registered inputs)
     logic [0:DEPTH]         valid_r;    
 
@@ -127,7 +95,7 @@ module add_tree
             for (col=0; col<(N_POW/(2**(row+1))); col=col+1) begin : stage_columns
                 // first stage connects to the input register
                 if(row==0) begin
-                    add #(.WIDTH_ADD(WIDTH_ADD)) U_ADD
+                    add #(.ADD_WIDTH(ADD_WIDTH)) U_ADD
                     (
                         .in1(in_r[2*col]),
                         .in2(in_r[2*col+1]),
@@ -136,7 +104,7 @@ module add_tree
                 end
                 // subsequent stages connect in series
                 else begin
-                    add #(.WIDTH_ADD(WIDTH_ADD)) U_ADD
+                    add #(.ADD_WIDTH(ADD_WIDTH)) U_ADD
                     (
                         .in1(stage_r[row-1][2*col]),
                         .in2(stage_r[row-1][2*col+1]),
@@ -148,18 +116,19 @@ module add_tree
     endgenerate
 
     // sequential logic
-    always_ff @(posedge clk) begin
+    always_ff @(posedge clk or posedge rst) begin
         if(rst) begin
             // only need to clear the valid register on reset to save fanout
-            valid_r <= '0;
+            valid_r             <= {($size(valid_r)){1'b0}};
+            add_tree_valid_out  <= 1'b0;
         end
         else if(en) begin
-            // register inputs, padding with zeroes up to WIDTH_ADD and N_POW elements
+            // register inputs, padding with zeroes up to ADD_WIDTH and N_POW elements
             for(int i=0; i<N_POW; i=i+1) begin
                 if(i<N)
-                    in_r[i] <= {{(WIDTH_ADD-N){1'b0}},in[i]};
+                    in_r[i] <= {{($size(in_r[i])-$size(in[i])){1'b0}},in[i]};
                 else
-                    in_r[i] <= {WIDTH_ADD{1'b0}};
+                    in_r[i] <= {ADD_WIDTH{1'b0}};
             end
             // register output from adders at each stage
             stage_r <= stage;
@@ -169,12 +138,11 @@ module add_tree
             for(int i=1; i<=DEPTH; i=i+1) begin
                 valid_r[i] <= valid_r[i-1];
             end
+            // assign output from final stage
+            add_tree_result <= stage[DEPTH-1][0];
+            add_tree_valid_out <= valid_r[DEPTH-1];
         end
     end
-    // assign output from final stage register
-    assign add_tree_result = stage_r[DEPTH-1][0];
-    // assign valid out from end of delay chain
-    assign add_tree_valid_out = valid_r[DEPTH];
 
 endmodule
 
@@ -230,15 +198,19 @@ module ro_counter
 endmodule
 
 module ro_controller
-// take num samples as input. generate num_sample cycles of ro collections upon go.
+// take num samples as input. generate num_sample cycles of ro collections upon go. stop on stop.
+// must respond to stop/go signals on same cycle they are received
 // output done when finished
     #(
         parameter NUM_SAMPLE_WIDTH = 10
     )
     (
      input  logic                           clk,
+     input  logic                           rst,
      input  logic                           go,
+     input  logic                           stop,
      input  logic   [NUM_SAMPLE_WIDTH-1:0]  num_samples,
+     input  logic   [NUM_SAMPLE_WIDTH-1:0]  collect_cycles,
      output logic                           add_tree_rst,
      output logic                           roc_rst,
      output logic                           roc_en,
@@ -249,54 +221,63 @@ module ro_controller
     state_t next_state, state_r;
 
     typedef logic [NUM_SAMPLE_WIDTH-1:0] count_t;
-    count_t next_num_samples, num_samples_r, next_count, count_r;
+    count_t next_sample_count, sample_count_r, next_collect_count, collect_count_r;
 
-    always_ff @(posedge clk) begin
-        state_r         <= next_state;
-        num_samples_r   <= next_num_samples;
-        count_r         <= next_count;
+    always_ff @(posedge clk or posedge rst) begin
+        if(rst) begin
+            state_r         <= START;
+        end
+        else begin
+            state_r         <= next_state;
+            sample_count_r  <= next_sample_count;
+            collect_count_r <= next_collect_count;
+        end
     end
 
     always_comb begin
-        add_tree_rst        = 1'b0;
-        roc_rst             = 1'b0;
-        roc_en              = 1'b0;
-        roc_valid           = 1'b0;
+        add_tree_rst        <= 1'b0;
+        roc_rst             <= 1'b0;
+        roc_en              <= 1'b0;
+        roc_valid           <= 1'b0;
         next_state          = state_r;
-        next_count          = count_r;
-        next_num_samples    = num_samples_r;
+        next_sample_count   = sample_count_r;
+        next_collect_count  = collect_count_r;
 
         case (state_r)
             START   : begin
-                add_tree_rst        = 1'b1;
-                next_count          = '0;
-                next_num_samples    = num_samples;
                 if(go) begin
-                    next_state      = CLEAR;
+                    next_sample_count   = num_samples;
+                    add_tree_rst        <= 1'b1;
+                    next_state          = CLEAR;
                 end
             end
             CLEAR   : begin
-                roc_rst         = 1'b1;
-                next_state  = COLLECT;
+                roc_rst             <= 1'b1;
+                next_collect_count  = collect_cycles;
+                if(stop)
+                    next_state  = DONE;
+                else 
+                    next_state  = COLLECT;
             end
             COLLECT  : begin
-                roc_en          = 1'b1;
-                next_state  = READ;
+                roc_en              <= 1'b1;
+                next_collect_count  = collect_count_r - 1'b1;
+                if(stop)
+                    next_state  = DONE;
+                else if((collect_count_r <= 1))
+                    next_state  = READ;
             end
             READ    : begin
-                roc_valid   = 1'b1;
-                next_count  = count_r + 1'b1;
-                if((count_r+1) >= num_samples_r) begin                
-                    //next_state  = DONE;
+                roc_valid   <= 1'b1;
+                next_sample_count  = sample_count_r - 1'b1;
+                if((stop) || (sample_count_r+1 <= 1))
+                    next_state  = DONE;
+                else
                     next_state  = CLEAR;
-                end
-                else begin
-                    next_state  = CLEAR;
-                end
             end
             DONE    : begin
                 if(!go)
-                    next_state = START;
+                    next_state  = START;
             end
             default : begin
                 next_state  = START;
@@ -309,7 +290,8 @@ module ro_adder
 // Implements N instances of ro_counters and sums them with a pipelined add tree
     #(
         parameter N = 20,
-        parameter WIDTH=14
+        parameter WIDTH=14,
+        parameter ADD_WIDTH = 19
     )
     (
         input   logic                           clk,
@@ -317,7 +299,7 @@ module ro_adder
         input   logic                           roc_en,
         input   logic                           roc_rst,
         input   logic                           roc_valid,
-        output  logic [WIDTH+$clog2(N)-1:0]     add_tree_result,
+        output  logic [ADD_WIDTH-1:0]           add_tree_result,
         output  logic                           add_tree_valid_out
     );
 
@@ -344,7 +326,8 @@ module ro_adder
     add_tree
         #(
             .N(N),
-            .WIDTH(WIDTH)
+            .WIDTH(WIDTH),
+            .ADD_WIDTH(ADD_WIDTH)
         ) U_ADD_TREE
         (
             .clk(clk),
@@ -358,24 +341,171 @@ module ro_adder
 
 endmodule
 
+// module sanity
+//     #(
+//         parameter RESULT_WIDTH = 32
+//     )
+//     (
+//         input  logic                        clk,
+//         input  logic                        rst,
+//         input  logic                        go,
+//         output logic                        valid,
+//         output logic [RESULT_WIDTH-1:0]     count
+//     );
+
+//     typedef enum  {S_START, S_COUNT} state_t;
+//     state_t next_state, state_r;
+
+//     typedef logic [RESULT_WIDTH-1:0] count_t;
+//     count_t next_count, count_r;
+
+//     logic next_valid;
+
+//     always_ff @(posedge clk or posedge rst) begin
+//         if(rst) begin  
+//             state_r         <= S_START;
+//             count_r         <= 0;
+//             count           <= 0;
+//             valid           <= 1'b0;
+//         end
+//         else begin
+//             state_r         <= next_state;
+//             count_r         <= next_count;
+//             count           <= next_count;
+//             valid           <= next_valid;
+//         end
+//     end
+
+//     always_comb begin
+//         next_state          = state_r;
+//         next_count          = count_r;
+//         next_valid          = 1'b0;
+
+//         case (state_r)
+//             S_START   : begin
+//                 next_count          = 0;
+//                 if(go) begin
+//                     next_state      = S_COUNT;
+//                 end
+//             end
+//             S_COUNT   : begin
+//                 next_count  = count_r + 1'b1;
+//                 next_valid  = 1'b1;
+//             end
+//             default : begin
+//                 next_state  = S_START;
+//             end
+//         endcase
+//     end
+// endmodule
+
+module switcher
+    #(
+        parameter int REG_SIZE          = 64,
+        parameter int SWITCH_DURATION   = 100  
+    )
+    (
+        input   logic                   clk,
+        input   logic                   rst,
+        input   logic                   go
+    );
+
+    typedef enum  {START, SWITCH0, SWITCH1, IDLE} state_t;
+    state_t next_state, state_r;
+
+    typedef logic [$clog2(SWITCH_DURATION)-1:0] count_t;
+    count_t next_count, count_r;
+
+    logic [REG_SIZE-1:0]    next_reg, reg_r;
+
+    always_ff @(posedge clk or posedge rst) begin
+        if(rst) begin
+            state_r <= START;
+        end
+        else begin
+            state_r <= next_state;
+            count_r <= next_count;
+            reg_r   <= next_reg;
+        end
+    end
+
+
+always_comb begin
+        next_state  = state_r;
+        next_count  = count_r;
+        next_reg    = reg_r;
+
+        case (state_r)
+            START       : begin
+                next_reg    = 0;
+                next_count = SWITCH_DURATION-1;
+                if(go) begin
+                    next_state = SWITCH1;
+                end
+            end
+            SWITCH0       : begin
+                next_reg    = 0;
+                if(count_r==0) begin
+                    next_count = SWITCH_DURATION-1;
+                    next_state = IDLE;
+                end
+                else begin
+                    next_count = count_r - 1'b1;
+                    next_state = SWITCH1;
+                end
+            end
+            SWITCH1       : begin
+                next_reg    = {(REG_SIZE){1'b1}};
+                if(count_r==0) begin
+                    next_count = SWITCH_DURATION-1;
+                    next_state = IDLE;
+                end
+                else begin
+                    next_count = count_r - 1'b1;
+                    next_state = SWITCH0;
+                end
+            end
+            IDLE        : begin
+                next_reg    = 0;
+                if(count_r==0) begin
+                    next_count = SWITCH_DURATION-1;
+                    next_state = SWITCH1;
+                end
+                else begin
+                    next_count = count_r - 1'b1;
+                end
+            end
+            default     : begin                
+                next_state  = START;
+            end
+        endcase
+    end
+endmodule
+
 module ro_top
     #(
         parameter N                 = 20,
         parameter WIDTH             = 14,
+        parameter ADD_WIDTH         = 19,
         parameter NUM_SAMPLE_WIDTH  = 10,
         parameter RESULT_WIDTH      = 32,
-        parameter FIFO_DEPTH        = 512,
-        parameter PIPELINE_LATENCY  = 5
+        parameter FIFO_DEPTH        = 1024,
+        parameter FIFO_WIDTH        = 20,
+        parameter PIPELINE_LATENCY  = 5,
+        parameter REG_SIZE          = 64,
+        parameter SWITCH_DURATION   = 100
 
     )
     (
         input  logic                        clk,
         input  logic                        afu_rst,
         input  logic                        go,
+        input  logic                        stop,
         input  logic [NUM_SAMPLE_WIDTH-1:0] num_samples,
+        input  logic [NUM_SAMPLE_WIDTH-1:0] collect_cycles,
         input  logic                        fifo_rd_en,
         output logic                        fifo_empty,
-        output logic [RESULT_WIDTH-1:0]     fifo_rd_data
+        output logic [FIFO_WIDTH-1:0]       fifo_rd_data
     );
 
     logic                           roc_en;
@@ -384,7 +514,7 @@ module ro_top
     logic                           add_tree_rst;
     logic                           add_tree_valid_out;
     logic   [WIDTH+$clog2(N)-1:0]   add_tree_result;
-    logic   [RESULT_WIDTH-1:0]      fifo_wr_data;
+    logic   [FIFO_WIDTH-1:0]        fifo_wr_data;
 
     ro_controller
         #(
@@ -392,8 +522,11 @@ module ro_top
         ) ro_controller
         (
             .clk(clk),
+            .rst(afu_rst),
             .go(go),
+            .stop(stop),
             .num_samples(num_samples),
+            .collect_cycles(collect_cycles),
             .roc_rst(roc_rst),
             .roc_en(roc_en),
             .add_tree_rst(add_tree_rst),
@@ -403,7 +536,8 @@ module ro_top
     ro_adder 
         #(
             .N(N),
-            .WIDTH(WIDTH)
+            .WIDTH(WIDTH),
+            .ADD_WIDTH(ADD_WIDTH)
         ) ro_adder
         (
             .clk(clk),
@@ -416,11 +550,12 @@ module ro_top
         );
 
     // pad fifo write data with 0's if needed
-    assign fifo_wr_data = ($size(fifo_wr_data)<$size(add_tree_result)) ? {{($size(fifo_wr_data)-$size(add_tree_result)){1'b0}},add_tree_result} : add_tree_result;
+    assign fifo_wr_data[FIFO_WIDTH-1:ADD_WIDTH] = {(FIFO_WIDTH-ADD_WIDTH){1'b0}};
+    assign fifo_wr_data[ADD_WIDTH-1:0] = add_tree_result;
 
     fifo 
         #(
-            .WIDTH(RESULT_WIDTH),
+            .WIDTH(FIFO_WIDTH),
             .DEPTH(FIFO_DEPTH),
             // This leaves enough space to absorb the entire contents of the
             // pipeline when there is a stall.
@@ -440,5 +575,15 @@ module ro_top
             .rd_data(fifo_rd_data)
         );
 
-endmodule
+   switcher 
+      #(
+         .REG_SIZE(REG_SIZE), 
+         .SWITCH_DURATION(SWITCH_DURATION)
+      ) switcher 
+      (
+         .clk(clk),
+         .rst(afu_rst),
+         .go(go)
+      );
 
+endmodule
