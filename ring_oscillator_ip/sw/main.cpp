@@ -91,27 +91,43 @@ int main(int argc, char *argv[]) {
     afu.write(MMIO_NUM_SAMPLES, num_outputs);
     afu.write(MMIO_COLLECT_CYCLES, num_collect_cycles);
 
+    cout  << "Starting RO...\n";
     // send the go signal for the FPGA to begin collection RO measurements
     afu.write(MMIO_GO, 1);  
 
-    cout  << "Expected response: \n" 
-          << (uint64_t) output << endl
-          << num_outputs << endl
-          << endl
-          << "Actual response: \n"
-          << afu.read(MMIO_WR_ADDR) << endl
-          << afu.read(MMIO_NUM_SAMPLES) << endl
-          << endl;
+    // wait a bit before triggering the power draw
+    //this_thread::sleep_for(chrono::milliseconds(30));
+
+    cout  << "Starting Switcher...\n";
+    // trigger power draw (switcher)
+    //afu.write(MMIO_RSA_GO, 1);  
+    afu.write(MMIO_SWITCHER_EN, 1);  
+
+    //// wait a bit before un-triggering the power draw
+    //this_thread::sleep_for(chrono::milliseconds(30));
+    //cout  << "Stopping Switcher...\n";
+    //// un-trigger power draw (switcher)
+    //afu.write(MMIO_SWITCHER_EN, 0);  
+
+    // cout  << "Expected response: \n" 
+    //       << (uint64_t) output << endl
+    //       << num_outputs << endl
+    //       << endl
+    //       << "Actual response: \n"
+    //       << afu.read(MMIO_WR_ADDR) << endl
+    //       << afu.read(MMIO_NUM_SAMPLES) << endl
+    //       << endl;
 
     // wait until FPGA has collected the requested number of samples
     while (afu.read(MMIO_DONE) == 0) {
-#ifdef SLEEP_WHILE_WAITING
-      this_thread::sleep_for(chrono::milliseconds(SLEEP_MS));
-#endif
+    cout  << "Waiting for done...\n";
+//#ifdef SLEEP_WHILE_WAITING
+//      this_thread::sleep_for(chrono::milliseconds(SLEEP_MS));
+//#endif
     }
 
     // write the outputs to file
-    string file_name = "/home/u208080/ro_switching.txt";
+    string file_name = "/home/u208080/ro_static.txt";
     ofstream txt_out(file_name.c_str());
     uint32_t outL, outR;
     for (unsigned i=0; i < num_outputs; i++) { 
@@ -160,8 +176,9 @@ int main(int argc, char *argv[]) {
 
 void printUsage(char *name) {
 
-  cout << "Usage: " << name << " size\n"     
+  cout << "Usage: " << name << " size hold_cycles\n"     
        << "size (positive integer for number of output cache lines to test. Every output cache line adds 8 32-bit outputs and 128 64-bit inputs.)\n"
+       << "hold_cycles (positive integer for number of FPGA clock cycles to let the ring oscillator run before transferring a line of data)\n"
        << endl;
 }
 
