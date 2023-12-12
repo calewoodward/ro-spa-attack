@@ -5,8 +5,8 @@ C:${FPGA_BBB_CCI_SRC}/BBB_cci_mpf/hw/rtl/cci_mpf_sources.txt
 +incdir+.
 memory_map.sv
 fifo.sv
-switcher.sv
-mod_exp.sv
+modmult.vhd
+rsacypher.vhd
 ro.sv
 cci_dma.sv
 afu.sv

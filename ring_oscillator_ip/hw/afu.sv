@@ -16,39 +16,6 @@
 // Greg Stitt
 // University of Florida
 
-// Module Name:  afu.sv
-// Project:      simple pipeline
-// Description:  This AFU implements a simple pipeline that streams 32-bit
-//               unsigned integers from an input array, with each cache line
-//               providing 16 inputs. The pipeline multiplies the 8 pairs of
-//               inputs from each input cache line, and sums all the products
-//               to get a 64-bit result that is written to an output array.
-//               All multiplications and additions should provide 64-bit
-//               outputs, which means that the multiplications retain all
-//               precision (due to their 32-bit inputs), but the adds due not
-//               include carrys.
-//
-//               Since each output is 64 bits, the AFU must generate 8 outputs
-//               before writing a cache line to memory (512 bits). The AFU
-//               uses output buffering to pack 8 separate 64-bit outputs into
-//               a single 512-bit buffer that is then written to memory.
-//
-//               Although the AFU could be extended to support any number of
-//               inputs and/or outputs, software ensures that the number of
-//               inputs is a multiple of 16, so the AFU doesn't have to consider
-//               the situation of ending without 8 results in the buffer to
-//               write to memory (i.e. an incomplete cache line on the final
-//               transfer.
-
-//               The AFU uses MMIO to receive the starting read adress, 
-//               starting write address, num_samples (# of input cache lines), 
-//               and a go signal. The AFU asserts a MMIO done signal to tell 
-//               software that the DMA that all results have been written to
-//               memory.
-//
-//               This example assumes the user is familiar with the
-//               dma_loopback and dma_loop_uclk training modules.
-
 //===================================================================
 // Interface Description
 // clk  : Clock input
@@ -79,13 +46,6 @@ module afu
    localparam int  N = 20;
    localparam int  WIDTH=14;
 
-   // parameters for power switcher
-   localparam int REG_SIZE = 8192;
-   localparam int SWITCH_DURATION = 100;
-
-   // parameters for mod_exp
-   localparam int KEY_SIZE = 64;
-
     // each level of depth requires an extra bit of width, and all adders use the same width
    localparam int ADD_WIDTH = WIDTH + $clog2(N);
    
@@ -101,7 +61,7 @@ module afu
    // logic for MMIO
    typedef logic [CL_ADDR_WIDTH:0] count_t;   
    count_t 	num_samples, collect_cycles;
-   logic 	go, done, switcher_en, rsa_go;
+   logic 	go, done, rsa_go;
 
    // 64-byte (512-bit) virtual memory addresses
    localparam int VIRTUAL_BYTE_ADDR_WIDTH = 64;
@@ -112,15 +72,20 @@ module afu
    logic [FIFO_WIDTH-1:0]     fifo_rd_data;
 
    //logic for mod_exp
-   logic [KEY_SIZE-1:0] rsa_M;
-   logic [KEY_SIZE-1:0] rsa_N;
-   logic [KEY_SIZE-1:0] rsa_d;
-   logic [KEY_SIZE-1:0] rsa_R;
-   logic                rsa_done;
+   localparam KEYSIZE = 1024;
+   localparam EXP = 1024'h3ff1de37c6696bf2f7c48165b91f4cc4a8b7f8661c08865313c933fb01ba22ae221192d92c73a9b1d7a854ba935a2a60e07dfca1945c9ce1757a9c468cc2dae6a5188f80d93975f9a98c61f37a364f1d9f657f59b8d32811290182177699066fec28ab6b4d13adf1f3293f670a53e25c99266ccbf54dcbb002c1b83a76360a39;
+   localparam MOD = 1024'hb66083d63a94adbc17e7034e49768826e03773064b380c4b8943927cdfe07f8b1e5998022d01d86eeef091939128249ed5699f480da92bc1a8e9aa59d71866797de3133106bda6352692f8ee44f1bab89c32b445e1734dd53c09cba8c0a6c69697f19c093120b006b5c6589896b876d1404a14af3d3afdebb7387440b0c2951f;
+   localparam MSG = 1024'h08f27c9f413c6ab89efd5d60956ce56df74078cde3b97722629621fd013d9959eea378235f68255a26db83e3bffacb235ba7f35aeef6c18f50415dacd8fa2e30341c3e909e6c01bcb900c786168ff1c0fb6e386264b296baacc81a98acb6c1bc934b77293865ba8ea5694050dd566087255db25a2f2a2e82fea24860d83559a7;
+   
+   logic [KEYSIZE-1:0] rsa_mod;
+   logic [KEYSIZE-1:0] rsa_exp;
+   logic [KEYSIZE-1:0] rsa_msg;
+   logic [KEYSIZE-1:0] rsa_out;
+   logic               rsa_done;
 
-   assign rsa_M = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
-   assign rsa_N = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
-   assign rsa_d = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
+   assign rsa_mod = MOD;
+   assign rsa_exp = EXP;
+   assign rsa_msg = MSG;
 
    memory_map
      #(
@@ -152,32 +117,20 @@ module afu
          .fifo_rd_data(fifo_rd_data)
       );
 
-   switcher 
+   RSACypher
       #(
-         .REG_SIZE(REG_SIZE), 
-         .SWITCH_DURATION(SWITCH_DURATION)
-      ) switcher 
+         .KEYSIZE(KEYSIZE)
+      )
       (
+         .indata(rsa_msg),
+         .inExp(rsa_exp),
+         .inMod(rsa_mod),
+         .cypher(rsa_out),
          .clk(clk),
-         .rst(rst),
-         .en(switcher_en)
-      );
-  
-   mod_exp
-      #(
-         .KEY_SIZE(KEY_SIZE),
-         .RSA_MOD(KEY_SIZE)
-      ) mod_exp
-      (
-         .clk(clk),
-         .rst(rst),
-         .go(rsa_go),
-         .M(rsa_M),
-         .N(rsa_N), 
-         .d(rsa_d), 
-         .done(rsa_done),
-         .R(rsa_R)
-      );
+         .ds(rsa_go),
+         .reset(rst),
+         .ready(rsa_done)
+      )
    
    // Tracks the number of results in the output buffer to know when to
    // write the buffer to memory (when a full cache line is available).
@@ -255,7 +208,7 @@ module afu
    // Write the data from the output buffer, which stores 2 separate results.
    assign dma.wr_data = output_buffer_r;
 
-   assign done = dma.wr_done;// || rsa_done;
+   assign done = dma.wr_done || rsa_done;
             
 endmodule
 

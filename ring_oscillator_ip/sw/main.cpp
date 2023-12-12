@@ -45,7 +45,7 @@
 using namespace std;
 
 void printUsage(char *name);
-bool checkUsage(int argc, char *argv[], unsigned long &num_inputs, unsigned long &num_cycles);
+bool checkUsage(int argc, char *argv[], unsigned long &num_output_cls, unsigned long &num_cycles);
 
 int main(int argc, char *argv[]) {
 
@@ -98,10 +98,10 @@ int main(int argc, char *argv[]) {
     // wait a bit before triggering the power draw
     //this_thread::sleep_for(chrono::milliseconds(30));
 
-    cout  << "Starting Switcher...\n";
+    cout  << "Starting RSA...\n";
     // trigger power draw (switcher)
     //afu.write(MMIO_RSA_GO, 1);  
-    afu.write(MMIO_SWITCHER_EN, 1);  
+    afu.write(MMIO_RSA_GO, 1);  
 
     //// wait a bit before un-triggering the power draw
     //this_thread::sleep_for(chrono::milliseconds(30));
@@ -120,14 +120,15 @@ int main(int argc, char *argv[]) {
 
     // wait until FPGA has collected the requested number of samples
     while (afu.read(MMIO_DONE) == 0) {
-    cout  << "Waiting for done...\n";
+      cout  << "Waiting for done...\n";
+      while (afu.read(MMIO_DONE) == 0);
 //#ifdef SLEEP_WHILE_WAITING
 //      this_thread::sleep_for(chrono::milliseconds(SLEEP_MS));
 //#endif
     }
 
     // write the outputs to file
-    string file_name = "/home/u208080/ro_static.txt";
+    string file_name = "/home/u208080/ro_rsa.txt";
     ofstream txt_out(file_name.c_str());
     uint32_t outL, outR;
     for (unsigned i=0; i < num_outputs; i++) { 
@@ -177,7 +178,7 @@ int main(int argc, char *argv[]) {
 void printUsage(char *name) {
 
   cout << "Usage: " << name << " size hold_cycles\n"     
-       << "size (positive integer for number of output cache lines to test. Every output cache line adds 8 32-bit outputs and 128 64-bit inputs.)\n"
+       << "size (positive integer for number of RO collection cache lines. Every cache line adds 16 32-bit outputs.)\n"
        << "hold_cycles (positive integer for number of FPGA clock cycles to let the ring oscillator run before transferring a line of data)\n"
        << endl;
 }

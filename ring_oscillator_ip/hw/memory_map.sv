@@ -82,11 +82,12 @@ module memory_map
          wr_addr        <= '0;	     
          num_samples    <= '0;
          collect_cycles <= '0;
-         switcher_en    <= '0;
          rsa_go         <= '0;
       end
       else begin
-	      go <= '0;
+         // ensure go signals cleared on same cycle
+	      go       <= '0;
+         rsa_go   <= '0;
  	 	 	 
          if (mmio.wr_en == 1'b1) begin
             case (mmio.wr_addr)
@@ -95,7 +96,6 @@ module memory_map
                16'h0054: wr_addr          <= mmio.wr_data[$size(wr_addr)-1:0];
                16'h0056: num_samples      <= mmio.wr_data[$size(num_samples)-1:0];
                16'h0058: collect_cycles   <= mmio.wr_data[$size(collect_cycles)-1:0];
-               16'h0070: switcher_en      <= mmio.wr_data[0];
                16'h0072: rsa_go           <= mmio.wr_data[0];
             endcase
          end
@@ -120,7 +120,6 @@ module memory_map
                16'h0056: mmio.rd_data[$size(num_samples)-1:0]     <= num_samples;     
                16'h0058: mmio.rd_data[$size(collect_cycles)-1:0]  <= collect_cycles;
                16'h0060: mmio.rd_data[0] 		                     <= done;
-               16'h0070: mmio.rd_data[0]                          <= switcher_en;
                16'h0072: mmio.rd_data[0]                          <= rsa_go;
                default:  mmio.rd_data 			                     <= 64'h0;
             endcase
