@@ -130,7 +130,7 @@ module afu
          .ds(rsa_go),
          .reset(rst),
          .ready(rsa_done)
-      )
+      );
    
    // Tracks the number of results in the output buffer to know when to
    // write the buffer to memory (when a full cache line is available).

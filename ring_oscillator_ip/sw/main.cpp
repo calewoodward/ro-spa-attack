@@ -33,7 +33,7 @@
 #include <iostream>
 #include <fstream>
 #include <cmath>
-
+#include <chrono>
 #include <opae/utils.h>
 
 #include "AFU.h"
@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
   // There are 16 32-bit outputs per cache line.
   num_outputs = num_output_cls * 16;
   // There are 16 32-bit inputs per output.
-  num_inputs = num_outputs;
+  num_inputs = 10;
 
   try {
     AFU afu(AFU_ACCEL_UUID); 
@@ -97,10 +97,9 @@ int main(int argc, char *argv[]) {
 
     // wait a bit before triggering the power draw
     //this_thread::sleep_for(chrono::milliseconds(30));
-
+    auto hostStart = std::chrono::high_resolution_clock::now();
     cout  << "Starting RSA...\n";
-    // trigger power draw (switcher)
-    //afu.write(MMIO_RSA_GO, 1);  
+    // trigger power draw
     afu.write(MMIO_RSA_GO, 1);  
 
     //// wait a bit before un-triggering the power draw
@@ -126,15 +125,14 @@ int main(int argc, char *argv[]) {
 //      this_thread::sleep_for(chrono::milliseconds(SLEEP_MS));
 //#endif
     }
-
-    // write the outputs to file
+    auto hostStop = std::chrono::high_resolution_clock::now();
+    auto hostDuration = std::chrono::duration_cast<std::chrono::microseconds>(hostStop - hostStart);
+    cout << "DONE!!!\nDuration: " << hostDuration.count() << "us" << endl;
+    cout << "Writing outputs to file...\n";
     string file_name = "/home/u208080/ro_rsa.txt";
     ofstream txt_out(file_name.c_str());
-    uint32_t outL, outR;
+    txt_out << "Time:" << hostDuration.count() << endl;
     for (unsigned i=0; i < num_outputs; i++) { 
-      //outL = (uint32_t)(output[i]>>32); 
-      //outR = (uint32_t)output[i];  
-      //txt_out << outR << endl << outL << endl;
       txt_out << output[i] << endl;
     }
     txt_out.close();

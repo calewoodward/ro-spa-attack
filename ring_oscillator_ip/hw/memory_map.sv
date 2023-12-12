@@ -67,7 +67,6 @@ module memory_map
    output logic [ADDR_WIDTH-1:0] rd_addr, wr_addr,
    output logic [SIZE_WIDTH-1:0] num_samples, collect_cycles,
    output logic                  go,
-   output logic                  switcher_en,
    output logic                  rsa_go,
    input logic 	               done   
    );
