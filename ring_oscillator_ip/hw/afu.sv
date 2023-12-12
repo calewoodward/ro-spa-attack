@@ -67,65 +67,67 @@ module afu
 	 dma_if.peripheral dma
    );
 
-   // 64-bit address lines
-   localparam int CL_ADDR_WIDTH = $size(t_ccip_clAddr);
-   // 512-bit data lines
-   localparam int CL_DATA_WIDTH = $size(t_ccip_clData); 
+   // parameters for FPGA connection via DMA
+   localparam int CL_ADDR_WIDTH = $size(t_ccip_clAddr);              // 64-bit address lines
+   localparam int CL_DATA_WIDTH = $size(t_ccip_clData);              // 512-bit data lines
    localparam int INPUT_WIDTH = 32;
    localparam int RESULT_WIDTH = 32;
-   localparam int INPUTS_PER_CL = CL_DATA_WIDTH / INPUT_WIDTH;   // 16
-   localparam int RESULTS_PER_CL = CL_DATA_WIDTH / RESULT_WIDTH; // 16
+   localparam int INPUTS_PER_CL = CL_DATA_WIDTH / INPUT_WIDTH;       // 16
+   localparam int RESULTS_PER_CL = CL_DATA_WIDTH / RESULT_WIDTH;     // 16x 32-bit results per line
 
-   localparam int REG_SIZE = 64;
-   localparam int SWITCH_DURATION = 100;
-
+   // parameters for ring-oscillator adder
    localparam int  N = 20;
    localparam int  WIDTH=14;
+
+   // parameters for power switcher
+   localparam int REG_SIZE = 8192;
+   localparam int SWITCH_DURATION = 100;
+
+   // parameters for mod_exp
+   localparam int KEY_SIZE = 64;
 
     // each level of depth requires an extra bit of width, and all adders use the same width
    localparam int ADD_WIDTH = WIDTH + $clog2(N);
    
-   // Normally I would make this a function of the number of inputs, but since
-   // the pipeline is hardcoded for a specific number of inputs in this example,
-   // this will suffice.
+   // pipeline latency is a function of the number of RO adders (N)
    localparam int PIPELINE_LATENCY = $clog2(N);
    
-   // 512 is the shallowest a block RAM can be in the Arria 10, so there's no 
-   // point in making it smaller unless using MLABs instead.
+   // following arria10 data sheet for available block ram sizes. 
+   // 512 depth with 32-bit inputs was too slow (fifo was filling up).
+   // increased to 1024 depth with 20-bit inputs
    localparam int FIFO_DEPTH = 1024;
    localparam int FIFO_WIDTH = 20;
-            
-   // I want to just use dma.count_t, but apparently
-   // either SV or Modelsim doesn't support that. Similarly, I can't
-   // just do dma.SIZE_WIDTH without getting errors or warnings about
-   // "constant expression cannot contain a hierarchical identifier" in
-   // some tools. Declaring a function within the interface works just fine in
-   // some tools, but in Quartus I get an error about too many ports in the
-   // module instantiation.
+   
+   // logic for MMIO
    typedef logic [CL_ADDR_WIDTH:0] count_t;   
-   count_t 	num_samples;
-   logic 	go;
-   logic 	done;
+   count_t 	num_samples, collect_cycles;
+   logic 	go, done, switcher_en, rsa_go;
 
-   // Software provides 64-bit virtual byte addresses.
-   // Again, this constant would ideally get read from the DMA interface if
-   // there was widespread tool support.
+   // 64-byte (512-bit) virtual memory addresses
    localparam int VIRTUAL_BYTE_ADDR_WIDTH = 64;
    logic [VIRTUAL_BYTE_ADDR_WIDTH-1:0] rd_addr, wr_addr;
 
-   // Instantiate the memory map, which provides the starting read/write
-   // 64-bit virtual byte addresses, an input size (in cache lines), and a
-   // go signal. It also sends a done signal back to software.
+   // logic for pipeline IO
+   logic 		               fifo_rd_en, fifo_empty;
+   logic [FIFO_WIDTH-1:0]     fifo_rd_data;
+
+   //logic for mod_exp
+   logic [KEY_SIZE-1:0] rsa_M;
+   logic [KEY_SIZE-1:0] rsa_N;
+   logic [KEY_SIZE-1:0] rsa_d;
+   logic [KEY_SIZE-1:0] rsa_R;
+   logic                rsa_done;
+
+   assign rsa_M = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
+   assign rsa_N = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
+   assign rsa_d = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
+
    memory_map
      #(
        .ADDR_WIDTH(VIRTUAL_BYTE_ADDR_WIDTH),
        .SIZE_WIDTH(CL_ADDR_WIDTH+1)
        )
      memory_map (.*);
-
-   // logic for pipeline IO
-   logic 		               fifo_rd_en, fifo_empty;
-   logic [RESULT_WIDTH-1:0]   fifo_rd_data;
 
    ro_top
       #(
@@ -136,9 +138,7 @@ module afu
          .RESULT_WIDTH(RESULT_WIDTH),
          .FIFO_DEPTH(FIFO_DEPTH),
          .FIFO_WIDTH(FIFO_WIDTH),
-         .PIPELINE_LATENCY(PIPELINE_LATENCY),
-         .REG_SIZE(REG_SIZE),
-         .SWITCH_DURATION(SWITCH_DURATION)
+         .PIPELINE_LATENCY(PIPELINE_LATENCY)
       ) ro_top
       (
          .clk(clk),
@@ -151,32 +151,33 @@ module afu
          .fifo_rd_en(fifo_rd_en),
          .fifo_rd_data(fifo_rd_data)
       );
+
+   switcher 
+      #(
+         .REG_SIZE(REG_SIZE), 
+         .SWITCH_DURATION(SWITCH_DURATION)
+      ) switcher 
+      (
+         .clk(clk),
+         .rst(rst),
+         .en(switcher_en)
+      );
   
-      // logic [KEY_SIZE-1:0] rsa_M;
-      // logic [KEY_SIZE-1:0] rsa_N;
-      // logic [KEY_SIZE-1:0] rsa_d;
-      //logic                rsa_done;
-
-      //assign rsa_M = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
-      //assign rsa_N = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
-      //assign rsa_d = 1024'hfffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000;
-
-      // mod_exp
-      //    #(
-      //       .KEY_SIZE(KEY_SIZE),
-      //       .RSA_MOD(KEY_SIZE)
-      //    ) 
-      //    mod_exp
-      //    (
-      //       .clk(clk),
-      //       .rst(rst),
-      //       .go(go),
-      //       .M(rsa_M),
-      //       .N(rsa_N), 
-      //       .d(rsa_d), 
-      //       .done(rsa_done),
-      //       .R()
-      //    );
+   mod_exp
+      #(
+         .KEY_SIZE(KEY_SIZE),
+         .RSA_MOD(KEY_SIZE)
+      ) mod_exp
+      (
+         .clk(clk),
+         .rst(rst),
+         .go(rsa_go),
+         .M(rsa_M),
+         .N(rsa_N), 
+         .d(rsa_d), 
+         .done(rsa_done),
+         .R(rsa_R)
+      );
    
    // Tracks the number of results in the output buffer to know when to
    // write the buffer to memory (when a full cache line is available).
