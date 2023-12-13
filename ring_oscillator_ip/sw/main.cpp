@@ -35,7 +35,7 @@
 #include <cmath>
 #include <chrono>
 #include <opae/utils.h>
-
+#include <string>
 #include "AFU.h"
 // Contains application-specific information
 #include "config.h"
@@ -93,45 +93,26 @@ int main(int argc, char *argv[]) {
 
     cout  << "Starting RO...\n";
     // send the go signal for the FPGA to begin collection RO measurements
-    afu.write(MMIO_GO, 1);  
+    afu.write(MMIO_RO_GO, 1);  
 
     // wait a bit before triggering the power draw
-    //this_thread::sleep_for(chrono::milliseconds(30));
+    //this_thread::sleep_for(chrono::milliseconds(10));
     auto hostStart = std::chrono::high_resolution_clock::now();
     cout  << "Starting RSA...\n";
     // trigger power draw
     afu.write(MMIO_RSA_GO, 1);  
 
-    //// wait a bit before un-triggering the power draw
-    //this_thread::sleep_for(chrono::milliseconds(30));
-    //cout  << "Stopping Switcher...\n";
-    //// un-trigger power draw (switcher)
-    //afu.write(MMIO_SWITCHER_EN, 0);  
-
-    // cout  << "Expected response: \n" 
-    //       << (uint64_t) output << endl
-    //       << num_outputs << endl
-    //       << endl
-    //       << "Actual response: \n"
-    //       << afu.read(MMIO_WR_ADDR) << endl
-    //       << afu.read(MMIO_NUM_SAMPLES) << endl
-    //       << endl;
-
-    // wait until FPGA has collected the requested number of samples
-    while (afu.read(MMIO_DONE) == 0) {
+    // wait until FPGA has collected the requested number of samples or rsa is done
+    if (afu.read(MMIO_RO_DONE) == 0) {
       cout  << "Waiting for done...\n";
-      while (afu.read(MMIO_DONE) == 0);
-//#ifdef SLEEP_WHILE_WAITING
-//      this_thread::sleep_for(chrono::milliseconds(SLEEP_MS));
-//#endif
+      while (afu.read(MMIO_RO_DONE) == 0);
     }
     auto hostStop = std::chrono::high_resolution_clock::now();
     auto hostDuration = std::chrono::duration_cast<std::chrono::microseconds>(hostStop - hostStart);
     cout << "DONE!!!\nDuration: " << hostDuration.count() << "us" << endl;
     cout << "Writing outputs to file...\n";
-    string file_name = "/home/u208080/ro_rsa.txt";
+    string file_name = "/home/u208080/ro_rsa_"+to_string(hostDuration.count())+".txt";
     ofstream txt_out(file_name.c_str());
-    txt_out << "Time:" << hostDuration.count() << endl;
     for (unsigned i=0; i < num_outputs; i++) { 
       txt_out << output[i] << endl;
     }

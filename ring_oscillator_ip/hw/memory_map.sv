@@ -66,9 +66,10 @@ module memory_map
    mmio_if.user mmio,
    output logic [ADDR_WIDTH-1:0] rd_addr, wr_addr,
    output logic [SIZE_WIDTH-1:0] num_samples, collect_cycles,
-   output logic                  go,
+   output logic                  ro_go,
    output logic                  rsa_go,
-   input logic 	               done   
+   input logic 	               ro_done,
+   input logic 	               rsa_done
    );
 
    // =============================================================//   
@@ -76,7 +77,7 @@ module memory_map
    // =============================================================//     
    always_ff @(posedge clk or posedge rst) begin 
       if (rst) begin
-         go 	         <= '0;
+         ro_go	         <= '0;
          rd_addr        <= '0;
          wr_addr        <= '0;	     
          num_samples    <= '0;
@@ -85,12 +86,12 @@ module memory_map
       end
       else begin
          // ensure go signals cleared on same cycle
-	      go       <= '0;
+	      ro_go    <= '0;
          rsa_go   <= '0;
  	 	 	 
          if (mmio.wr_en == 1'b1) begin
             case (mmio.wr_addr)
-               16'h0050: go 	            <= mmio.wr_data[0];
+               16'h0050: ro_go 	         <= mmio.wr_data[0];
                16'h0052: rd_addr          <= mmio.wr_data[$size(rd_addr)-1:0];
                16'h0054: wr_addr          <= mmio.wr_data[$size(wr_addr)-1:0];
                16'h0056: num_samples      <= mmio.wr_data[$size(num_samples)-1:0];
@@ -118,8 +119,8 @@ module memory_map
                16'h0054: mmio.rd_data[$size(wr_addr)-1:0]         <= wr_addr;
                16'h0056: mmio.rd_data[$size(num_samples)-1:0]     <= num_samples;     
                16'h0058: mmio.rd_data[$size(collect_cycles)-1:0]  <= collect_cycles;
-               16'h0060: mmio.rd_data[0] 		                     <= done;
-               16'h0072: mmio.rd_data[0]                          <= rsa_go;
+               16'h0060: mmio.rd_data[0] 		                     <= ro_done;
+               16'h0074: mmio.rd_data[0]                          <= rsa_done;
                default:  mmio.rd_data 			                     <= 64'h0;
             endcase
          end
