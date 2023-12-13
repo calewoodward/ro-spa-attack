@@ -109,9 +109,17 @@ int main(int argc, char *argv[]) {
     }
     auto hostStop = std::chrono::high_resolution_clock::now();
     auto hostDuration = std::chrono::duration_cast<std::chrono::microseconds>(hostStop - hostStart);
-    cout << "DONE!!!\nDuration: " << hostDuration.count() << "us" << endl;
-    cout << "Writing outputs to file...\n";
+    cout << "RO collection complete!\nDuration: " << hostDuration.count() << "us" << endl;
+    
+    if (afu.read(MMIO_RSA_DONE) == 1) {
+      cout  << "RSA finished successfully!\n";
+    }
+    else {
+      cout << "RSA incomplete...\n";
+    }
+    
     string file_name = "/home/u208080/ro_rsa_"+to_string(hostDuration.count())+".txt";
+    cout << "Writing outputs to file: " << file_name << endl;
     ofstream txt_out(file_name.c_str());
     for (unsigned i=0; i < num_outputs; i++) { 
       txt_out << output[i] << endl;
