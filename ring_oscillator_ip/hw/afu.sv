@@ -61,7 +61,7 @@ module afu
    // logic for MMIO
    typedef logic [CL_ADDR_WIDTH:0] count_t;   
    count_t 	num_samples, collect_cycles;
-   logic 	go, done, rsa_go;
+   logic 	go, done, rsa_go, rsa_done;
 
    // 64-byte (512-bit) virtual memory addresses
    localparam int VIRTUAL_BYTE_ADDR_WIDTH = 64;
@@ -81,7 +81,7 @@ module afu
    logic [KEYSIZE-1:0] rsa_exp;
    logic [KEYSIZE-1:0] rsa_msg;
    logic [KEYSIZE-1:0] rsa_out;
-   logic               rsa_done;
+   logic               rsa_ready;
 
    assign rsa_mod = MOD;
    assign rsa_exp = EXP;
@@ -129,9 +129,25 @@ module afu
          .clk(clk),
          .ds(rsa_go),
          .reset(rst),
-         .ready(rsa_done)
+         .ready(rsa_ready)
       );
-   
+
+
+   // only set rsa_done after rsa_go has been received
+   logic rsa_started;
+   always_ff @ (posedge clk or posedge rst) begin
+      if (rst) begin
+         rsa_started <= 1'b0;
+         rsa_done    <= 1'b0;
+      end
+      else begin
+         if (rsa_go)
+            rsa_started <= 1'b1;
+         else if ((rsa_started==1'b1) && (rsa_ready==1'b1))
+            rsa_done <= 1'b1;
+      end
+   end
+
    // Tracks the number of results in the output buffer to know when to
    // write the buffer to memory (when a full cache line is available).
    logic [$clog2(RESULTS_PER_CL):0] result_count_r;
@@ -208,7 +224,7 @@ module afu
    // Write the data from the output buffer, which stores 2 separate results.
    assign dma.wr_data = output_buffer_r;
 
-   assign done = dma.wr_done || rsa_done;
+   assign done = dma.wr_done;
             
 endmodule
 
