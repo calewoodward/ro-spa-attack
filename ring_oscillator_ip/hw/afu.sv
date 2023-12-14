@@ -71,7 +71,7 @@ module afu
    logic 		               fifo_rd_en, fifo_empty;
    logic [FIFO_WIDTH-1:0]     fifo_rd_data;
 
-   //logic for mod_exp
+   //logic for rsa
    localparam KEYSIZE = 1024;
    localparam EXP = 1024'h3ff1de37c6696bf2f7c48165b91f4cc4a8b7f8661c08865313c933fb01ba22ae221192d92c73a9b1d7a854ba935a2a60e07dfca1945c9ce1757a9c468cc2dae6a5188f80d93975f9a98c61f37a364f1d9f657f59b8d32811290182177699066fec28ab6b4d13adf1f3293f670a53e25c99266ccbf54dcbb002c1b83a76360a39;
    localparam MOD = 1024'hb66083d63a94adbc17e7034e49768826e03773064b380c4b8943927cdfe07f8b1e5998022d01d86eeef091939128249ed5699f480da92bc1a8e9aa59d71866797de3133106bda6352692f8ee44f1bab89c32b445e1734dd53c09cba8c0a6c69697f19c093120b006b5c6589896b876d1404a14af3d3afdebb7387440b0c2951f;
@@ -108,7 +108,8 @@ module afu
       (
          .clk(clk),
          .afu_rst(rst),
-         .go(go),
+         .go(ro_go),
+         //.stop(rsa_done),
          .stop(1'b0),
          .num_samples(num_samples),
          .collect_cycles(collect_cycles),
@@ -132,7 +133,6 @@ module afu
          .ready(rsa_ready)
       );
 
-
    // only set rsa_done after rsa_go has been received
    logic rsa_started;
    always_ff @ (posedge clk or posedge rst) begin
@@ -147,7 +147,7 @@ module afu
             rsa_done <= 1'b1;
       end
    end
-
+   
    // Tracks the number of results in the output buffer to know when to
    // write the buffer to memory (when a full cache line is available).
    logic [$clog2(RESULTS_PER_CL):0] result_count_r;
@@ -208,15 +208,12 @@ module afu
 
    // Start both the read and write channels when the MMIO go is received.
    // Note that writes don't actually occur until dma.wr_en is asserted.
-   assign dma.rd_go = go;
-   assign dma.wr_go = go;
+   assign dma.rd_go = ro_go;
+   assign dma.wr_go = ro_go;
 
-   // Read from the DMA when there is data available (!dma.empty) and when
-   // there is still space in the absorption FIFO to absorb the result in the
-   // case of a stall. Without an absorption FIFO, the condition would 
-   // likely be: !dma.empty && !stalled
-   //assign dma.rd_en = !dma.empty && !fifo_almost_full;
+   // read is disabled for this implementation
    assign dma.rd_en = 1'b0;
+
    // Write to memory when there is a full cache line to write, and when the
    // DMA isn't full.
    assign dma.wr_en = (result_count_r == RESULTS_PER_CL) && !dma.full;

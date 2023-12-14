@@ -66,7 +66,7 @@ module memory_map
    mmio_if.user mmio,
    output logic [ADDR_WIDTH-1:0] rd_addr, wr_addr,
    output logic [SIZE_WIDTH-1:0] num_samples, collect_cycles,
-   output logic                  go,
+   output logic                  ro_go,
    output logic                  rsa_go,
    input logic                   done,   
    input logic 	                 rsa_done   
@@ -91,7 +91,7 @@ module memory_map
  	 	 	 
          if (mmio.wr_en == 1'b1) begin
             case (mmio.wr_addr)
-               16'h0050: go 	            <= mmio.wr_data[0];
+               16'h0050: ro_go 	         <= mmio.wr_data[0];
                16'h0052: rd_addr          <= mmio.wr_data[$size(rd_addr)-1:0];
                16'h0054: wr_addr          <= mmio.wr_data[$size(wr_addr)-1:0];
                16'h0056: num_samples      <= mmio.wr_data[$size(num_samples)-1:0];

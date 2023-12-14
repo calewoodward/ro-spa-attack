@@ -35,7 +35,7 @@
 #include <cmath>
 #include <chrono>
 #include <opae/utils.h>
-
+#include <string>
 #include "AFU.h"
 // Contains application-specific information
 #include "config.h"

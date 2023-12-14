@@ -429,6 +429,7 @@ module ro_top
     logic                           add_tree_valid_out;
     logic   [WIDTH+$clog2(N)-1:0]   add_tree_result;
     logic   [FIFO_WIDTH-1:0]        fifo_wr_data;
+    logic                           fifo_almost_full;
 
     ro_controller
         #(
@@ -465,7 +466,9 @@ module ro_top
 
     // pad fifo write data with 0's if needed
     assign fifo_wr_data[FIFO_WIDTH-1:ADD_WIDTH] = {(FIFO_WIDTH-ADD_WIDTH){1'b0}};
-    assign fifo_wr_data[ADD_WIDTH-1:0] = add_tree_result;
+    // signal in data that fifo is amost full and data is no longer reliable
+    assign fifo_wr_data[ADD_WIDTH-1:0] = (fifo_almost_full) ? {(ADD_WIDTH){1'b1}} : add_tree_result;
+    //assign fifo_wr_data[ADD_WIDTH-1:0] = add_tree_result;
 
     fifo 
         #(
@@ -482,7 +485,7 @@ module ro_top
             .wr_en(add_tree_valid_out),
             .empty(fifo_empty),
             .full(),
-            .almost_full(),
+            .almost_full(fifo_almost_full),
             .count(),
             .space(),
             .wr_data(fifo_wr_data),
