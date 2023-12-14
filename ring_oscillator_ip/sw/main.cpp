@@ -73,6 +73,15 @@ int main(int argc, char *argv[]) {
     auto input  = afu.malloc<volatile uint32_t>(num_inputs);
     auto output = afu.malloc<volatile uint32_t>(num_outputs);  
 
+    // allocate the variables for timestamps
+    chrono::high_resolution_clock::time_point    roStart;
+    chrono::high_resolution_clock::time_point    rsaStart;
+    //chrono::duration<chrono::microseconds>       tplus_rsaStart;
+    chrono::high_resolution_clock::time_point    rsaStop;
+    //chrono::duration<chrono::microseconds>       tplus_rsaStop;
+    chrono::high_resolution_clock::time_point    roStop;
+    //chrono::duration<chrono::microseconds>       tplus_roStop;
+
     // Initialize the input and output arrays.
     for (unsigned i=0; i < num_inputs; i++) {      
       input[i] = rand();
@@ -92,33 +101,47 @@ int main(int argc, char *argv[]) {
     afu.write(MMIO_COLLECT_CYCLES, num_collect_cycles);
 
     cout  << "Starting RO...\n";
+    roStart = std::chrono::high_resolution_clock::now();
     // send the go signal for the FPGA to begin collection RO measurements
-    afu.write(MMIO_RO_GO, 1);  
+    afu.write(MMIO_GO, 1);  
 
     // wait a bit before triggering the power draw
-    //this_thread::sleep_for(chrono::milliseconds(10));
-    auto hostStart = std::chrono::high_resolution_clock::now();
-    cout  << "Starting RSA...\n";
-    // trigger power draw
-    afu.write(MMIO_RSA_GO, 1);  
-
-    // wait until FPGA has collected the requested number of samples or rsa is done
-    if (afu.read(MMIO_RO_DONE) == 0) {
-      cout  << "Waiting for done...\n";
-      while (afu.read(MMIO_RO_DONE) == 0);
-    }
-    auto hostStop = std::chrono::high_resolution_clock::now();
-    auto hostDuration = std::chrono::duration_cast<std::chrono::microseconds>(hostStop - hostStart);
-    cout << "RO collection complete!\nDuration: " << hostDuration.count() << "us" << endl;
+    //this_thread::sleep_for(chrono::milliseconds(5));
     
-    if (afu.read(MMIO_RSA_DONE) == 1) {
-      cout  << "RSA finished successfully!\n";
+    rsaStart = std::chrono::high_resolution_clock::now();
+    // send the ho signal for RSA to begin decryption
+    afu.write(MMIO_RSA_GO, 1);  
+    
+    bool rsaDoneFlag = false;
+    // wait until FPGA has collected the requested number of samples
+    while (afu.read(MMIO_DONE) == 0) {
+      if (afu.read(MMIO_RSA_DONE) == 1) {
+        rsaStop = std::chrono::high_resolution_clock::now();
+	rsaDoneFlag = true;
+    	while (afu.read(MMIO_DONE) == 0); 
+      }
+    }
+    
+    roStop = std::chrono::high_resolution_clock::now();
+  
+    auto tplus_rsaStart = std::chrono::duration_cast<std::chrono::microseconds>(rsaStart - roStart);
+
+    cout << "RO  started at T+ 0 us" <<  endl
+	 << "RSA started at T+ " << tplus_rsaStart.count() << " us" << endl;
+    
+    // check if the RSA module finished during RO collection cycles
+    if (rsaDoneFlag) {
+        auto tplus_rsaStop = std::chrono::duration_cast<std::chrono::microseconds>(rsaStop - roStart);
+        cout << "RSA stopped at T+ " << tplus_rsaStop.count() << " us" << endl;
     }
     else {
-      cout << "RSA incomplete...\n";
+	    cout << "WARNING: RO stopped before RSA was finished" << endl;
     }
-    
-    string file_name = "/home/u208080/ro_rsa_"+to_string(hostDuration.count())+".txt";
+   
+    auto tplus_roStop = std::chrono::duration_cast<std::chrono::microseconds>(roStop - roStart);
+    cout << "RO  stopped at T+ " << tplus_roStop.count() << " us" << endl;
+        
+    string file_name = "/home/u208080/ro_rsa.txt";
     cout << "Writing outputs to file: " << file_name << endl;
     ofstream txt_out(file_name.c_str());
     for (unsigned i=0; i < num_outputs; i++) { 

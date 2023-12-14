@@ -61,7 +61,7 @@ module afu
    // logic for MMIO
    typedef logic [CL_ADDR_WIDTH:0] count_t;   
    count_t 	num_samples, collect_cycles;
-   logic 	ro_go, ro_done, rsa_go, rsa_done;
+   logic 	go, done, rsa_go, rsa_done;
 
    // 64-byte (512-bit) virtual memory addresses
    localparam int VIRTUAL_BYTE_ADDR_WIDTH = 64;
@@ -135,10 +135,10 @@ module afu
 
    // only set rsa_done after rsa_go has been received
    logic rsa_started;
-   always_ff @ (posedge clk or posedge rst) begin     
+   always_ff @ (posedge clk or posedge rst) begin
       if (rst) begin
          rsa_started <= 1'b0;
-         rsa_done  <= 1'b0;
+         rsa_done    <= 1'b0;
       end
       else begin
          if (rsa_go)
@@ -221,8 +221,7 @@ module afu
    // Write the data from the output buffer, which stores 2 separate results.
    assign dma.wr_data = output_buffer_r;
 
-   // afu is finished when all data has been transferred back to the cpu
-   assign ro_done = dma.wr_done;
+   assign done = dma.wr_done;
             
 endmodule
 
